@@ -7,6 +7,7 @@ retrieval operations. This history will re-order itself based on FSW time.
 :author: koran
 """
 
+import bisect
 from fprime_gds.common.models.serialize.time_type import TimeType
 
 from fprime_gds.common.history.history import History
@@ -152,23 +153,36 @@ class ChronologicalHistory(History):
     @staticmethod
     def __insert_chrono(data_object, ordered):
         """
-        traverses the existing order (back to front) and inserts the data object in the correct
-        position chronologically.
+        Inserts the data object in the correct position chronologically using binary search.
+        Optimized from O(n) to O(log n) for high-throughput telemetry and event handling.
+
         Args:
             data_object: an item to insert in the history. Must have a get_time() method.
             ordered: a list to insert the item into.
         Returns:
             the index that the item was inserted at (int)
         """
-        for i, item in reversed(list(enumerate(ordered))):
-            # Note: for events with the exact same time, this should default to the order received from downlink
-            #       and as such the data item should be treated as newer because it was received later.
-            if item.get_time() <= data_object.get_time():
-                ordered.insert(i + 1, data_object)
-                return i
-        # If the data object is the earliest in the list or the list was empty
-        ordered.insert(0, data_object)
-        return 0
+        if not ordered:
+            ordered.append(data_object)
+            return 0
+
+        # Binary search for insertion point based on timestamp
+        # For items with the same time, maintain receive order (insert after existing items)
+        data_time = data_object.get_time()
+
+        # Use bisect to find insertion point in O(log n) time
+        # We need to compare by time, so we do manual binary search
+        left, right = 0, len(ordered)
+        while left < right:
+            mid = (left + right) // 2
+            # Use <= to place new items after existing items with same timestamp
+            if ordered[mid].get_time() <= data_time:
+                left = mid + 1
+            else:
+                right = mid
+
+        ordered.insert(left, data_object)
+        return max(0, left - 1) if left > 0 else 0
 
     def __clear_list(self, start, ordered):
         """
@@ -196,13 +210,19 @@ class ChronologicalHistory(History):
             the index in the given list that start refers to
         """
         if predicates.is_predicate(start):
+            # Predicates must use linear search
             index = 0
             while index < len(ordered) and not start(ordered[index]):
                 index += 1
             return index
         if isinstance(start, TimeType):
-            index = 0
-            while index < len(ordered) and ordered[index].get_time() < start:
-                index += 1
-            return index
+            # Use binary search for TimeType - O(log n) instead of O(n)
+            left, right = 0, len(ordered)
+            while left < right:
+                mid = (left + right) // 2
+                if ordered[mid].get_time() < start:
+                    left = mid + 1
+                else:
+                    right = mid
+            return left
         return start
