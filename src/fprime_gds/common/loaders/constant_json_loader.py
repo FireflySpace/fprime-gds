@@ -31,12 +31,13 @@ class ConstantJsonLoader(JsonLoader):
         """
         name_dict = {}
 
+        constants = self.json_dict.get(self.CONSTANTS_FIELD, [])
         if self.CONSTANTS_FIELD not in self.json_dict:
             raise GdsDictionaryParsingException(
                 f"Ground Dictionary missing '{self.CONSTANTS_FIELD}' field: {str(self.json_file)}"
             )
 
-        for constant in self.json_dict[self.CONSTANTS_FIELD]:
+        for constant in constants:
             try:
                 name_dict[constant["qualifiedName"]] = constant["value"]
             except KeyError as e:

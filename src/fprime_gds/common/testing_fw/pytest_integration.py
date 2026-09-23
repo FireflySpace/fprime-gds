@@ -14,6 +14,7 @@ Here a test (defined by starting the name with test_) uses the fprime_test_api f
 
 @author lestarch
 """
+import itertools
 import sys
 from pathlib import Path
 import pytest
@@ -21,7 +22,7 @@ import pytest
 from fprime_gds.common.testing_fw.api import IntegrationTestAPI
 from fprime_gds.executables.cli import StandardPipelineParser
 
-SEQUENCE_COUNTER = -1
+SEQUENCE_COUNTER = itertools.count()
 
 
 def pytest_addoption(parser):
@@ -60,6 +61,18 @@ def pytest_addoption(parser):
         help="Path to JSON configuration file for mapping deployment components",
     )
 
+    parser.addoption(
+        "--use-yamcs",
+        action="store_true",
+        help="Use YAMCS transport instead of TCP socket"
+    )
+    parser.addoption(
+        "--yamcs-url",
+        action="store",
+        default="http://localhost:8090",
+        help="YAMCS server URL [default: %(default)s]"
+    )
+
 def pytest_configure(config):
     """ This is a hook to allow plugins and conftest files to perform initial configuration
     
@@ -68,7 +81,10 @@ def pytest_configure(config):
     """
     # Create a JUnit XML report file to capture the test result in a specified location
     if config.getoption("--gen-junitxml"):
-        config.option.xmlpath = Path(config.getoption("--logs")) / config.getoption("--junit-xml-file")
+        logs = config.getoption("--logs")
+        if not logs:
+            raise pytest.UsageError("--gen-junitxml requires --logs to be specified")
+        config.option.xmlpath = Path(logs) / config.getoption("--junit-xml-file")
 
 @pytest.fixture(scope='session')
 def fprime_test_api_session(request):
@@ -94,10 +110,22 @@ def fprime_test_api_session(request):
     api = None
     deployment_config = None
     try:
-        # Parse the command line arguments into a client connection
         arg_ns = pipeline_parser.handle_arguments(request.config.known_args_namespace, client=True)
 
-        # Build a new pipeline with the parsed and processed arguments
+        if request.config.getoption("--use-yamcs"):
+            try:
+                from fprime_gds.common.yamcs_transport import YamcsClient
+            except ImportError:
+                raise pytest.UsageError(
+                    "--use-yamcs requires the yamcs-client package. Install with: pip install fprime-gds[yamcs]"
+                )
+            yamcs_url = request.config.getoption("--yamcs-url")
+            scheme = "yamcs+https" if yamcs_url.startswith("https://") else "yamcs"
+            yamcs_host = yamcs_url.replace("http://", "").replace("https://", "")
+
+            arg_ns.connection_transport = YamcsClient
+            arg_ns.connection_uri = f"{scheme}://{yamcs_host}"
+
         pipeline = pipeline_parser.pipeline_factory(arg_ns, pipeline)
 
         # Get deployment configuration from command line arguments
@@ -144,7 +172,5 @@ def fprime_test_api(fprime_test_api_session, request):
     Return:
         test case specific session (identical to full session)
     """
-    global SEQUENCE_COUNTER
-    SEQUENCE_COUNTER += 1
-    fprime_test_api_session.start_test_case(request.node.name, SEQUENCE_COUNTER)
+    fprime_test_api_session.start_test_case(request.node.name, next(SEQUENCE_COUNTER))
     return fprime_test_api_session

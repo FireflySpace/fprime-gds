@@ -15,6 +15,7 @@
 
 import argparse
 import os
+from pathlib import Path
 import sys
 
 from fprime_gds.common.models.serialize.time_type import TimeType
@@ -23,7 +24,7 @@ from fprime_gds.common.data_types import exceptions as gseExceptions
 from fprime_gds.common.data_types.cmd_data import CmdData, CommandArgumentsException
 from fprime_gds.common.encoders.seq_writer import SeqBinaryWriter
 from fprime_gds.common.loaders.cmd_json_loader import CmdJsonLoader
-from fprime_gds.common.parsers.seq_file_parser import SeqFileParser
+from fprime_gds.common.parsers.lark_seq_parser import LarkSeqFileParser
 from fprime_gds.executables.cli import DictionaryParser, ParserBase
 from typing import Any, Dict, Tuple
 
@@ -69,8 +70,9 @@ def generateSequence(inputFile, outputFile, dictionary, timebase, cont=False):
 
     # Parse the input file:
     command_list = []
-    file_parser = SeqFileParser()
+    file_parser = LarkSeqFileParser()
 
+    filename_abs = Path(inputFile).absolute()
     parsed_seq = file_parser.parse(inputFile, cont=cont)
 
     messages = []
@@ -78,7 +80,7 @@ def generateSequence(inputFile, outputFile, dictionary, timebase, cont=False):
         for i, descriptor, seconds, useconds, mnemonic, args in parsed_seq:
             try:
                 if mnemonic not in cmd_name_dict:
-                    msg = f"Line {i + 1}: '{mnemonic}' does not match any command in the command dictionary."
+                    msg = f"{filename_abs}:{i + 1}: '{mnemonic}' does not match any command in the command dictionary."
                     raise SeqGenException(msg)
                 # Set the command arguments:
                 try:
@@ -94,12 +96,12 @@ def generateSequence(inputFile, outputFile, dictionary, timebase, cont=False):
                         cmd_time=cmd_time,
                     )
                 except CommandArgumentsException as e:
-                    msg = f"Line {i + 1}: {mnemonic} errored: {','.join(e.errors)}"
-                    raise SeqGenException(msg)
+                    msg = f"{filename_abs}:{i + 1}: {mnemonic} errored: {','.join(e.errors)}"
+                    raise SeqGenException(msg) from e
                 command_list.append(cmd_data)
             except SeqGenException as exc:
                 if not cont:
-                    raise
+                    raise exc
                 messages.append(exc.getMsg())
     except gseExceptions.GseControllerParsingException as e:
         raise SeqGenException("\n".join([e.getMsg()] + messages))
@@ -112,9 +114,9 @@ def generateSequence(inputFile, outputFile, dictionary, timebase, cont=False):
         outputFile = f"{os.path.splitext(inputFile)[0]}.bin"
     try:
         writer.open(outputFile)
-    except:
-        msg = f"Encountered problem opening output file '{outputFile}'."
-        raise SeqGenException(msg)
+    except OSError as exc:
+        msg = f"Encountered problem opening output file '{outputFile}': {exc}"
+        raise SeqGenException(msg) from exc
 
     writer.write(command_list)
     writer.close()

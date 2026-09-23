@@ -23,6 +23,7 @@ from fprime_gds.common.utils.cleanup import globals_cleanup
 # Path to test data directory
 TEST_DATA_DIR = Path(__file__).parent / "test_dp_data"
 DICTIONARY_PATH = TEST_DATA_DIR / "dictionary.json"
+DICTIONARY_REF_PATH = TEST_DATA_DIR / "dictionary_ref.json"
 
 
 @pytest.fixture
@@ -32,6 +33,16 @@ def load_dictionary():
     with other tests."""
     globals_cleanup()
     dictionaries = Dictionaries.load_dictionaries_into_config(str(DICTIONARY_PATH))
+    yield dictionaries
+    globals_cleanup()
+
+@pytest.fixture
+def load_dictionary_ref():
+    """Fixture to load the test dictionary into ConfigManager before tests.
+    Also uses the globals_cleanup utility to reset global state and not interfere 
+    with other tests."""
+    globals_cleanup()
+    dictionaries = Dictionaries.load_dictionaries_into_config(str(DICTIONARY_REF_PATH))
     yield dictionaries
     globals_cleanup()
 
@@ -175,9 +186,9 @@ class TestDataProductDecoderArrayTypes:
         
         # Array records should have a Size field
         record = result["Records"][0]
-        assert "Size" in record
         assert "Data" in record
-        assert isinstance(record["Data"], list)
+        assert "size" in record["Data"]
+        assert isinstance(record["Data"]["values"], list)
     
     def test_decode_u32_array(self, load_dictionary, tmp_path):
         """Test decoding of U32 array data product."""
@@ -191,9 +202,9 @@ class TestDataProductDecoderArrayTypes:
         assert "Header" in result
         assert "Records" in result
         record = result["Records"][0]
-        assert "Size" in record
         assert "Data" in record
-        assert isinstance(record["Data"], list)
+        assert "size" in record["Data"]
+        assert isinstance(record["Data"]["values"], list)
     
     def test_decode_data_array(self, load_dictionary, tmp_path):
         """Test decoding of Data array data product."""
@@ -397,10 +408,10 @@ class TestDataProductDecoderRecordDecoding:
         assert len(records) > 0
         
         record = records[0]
-        assert "Size" in record
         assert "Data" in record
-        assert isinstance(record["Data"], list)
-        assert len(record["Data"]) == record["Size"]
+        assert "size" in record["Data"]
+        assert isinstance(record["Data"]["values"], list)
+        assert len(record["Data"]["values"]) == record["Data"]["size"]
 
 
 class TestDataProductDecoderIntegration:
@@ -468,6 +479,50 @@ class TestDataProductDecoderIntegration:
             assert "Record" in record
             assert "Data" in record
 
+class TestDataProductDecoderCompressedProducts:
+    """Test decoding of compressed products."""
+
+    def test_decode_compressed(self, load_dictionary_ref, tmp_path):
+        """Test that compressed records can be decoded"""
+        decoder = DataProductDecoder(
+            load_dictionary_ref,
+            str(TEST_DATA_DIR / "DpDemoCompressed.fdp")
+        )
+        result = decoder.decode()
+
+        # Should contain 14 records from DpDemo
+        records = result["Records"]
+        assert len(records) == 14
+
+    def test_decode_compressed_raw(self, load_dictionary_ref, tmp_path):
+        """Test that RAW compressed records can be generated"""
+        decoder = DataProductDecoder(
+            load_dictionary_ref,
+            str(TEST_DATA_DIR / "DpDemoCompressed.fdp"),
+            disable_decompression=True
+        )
+        result = decoder.decode()
+
+        # Product should contain one compressed record segment
+        records = result["Records"]
+        assert len(records) == 1
+        assert result["Records"][0]["Record"]["record_name"] == "DpCompression.dpCompressProc.CompressionRecord"
+
+    def test_decode_compressed_compare(self, load_dictionary_ref, tmp_path):
+        """Test that compressed records can be identical to uncompressed records"""
+        decoder_compressed = DataProductDecoder(
+            load_dictionary_ref,
+            str(TEST_DATA_DIR / "DpDemoCompressed.fdp")
+        )
+        result_compressed = decoder_compressed.decode()
+
+        decoder_uncompressed = DataProductDecoder(
+            load_dictionary_ref,
+            str(TEST_DATA_DIR / "DpDemoUncompressed.fdp")
+        )
+        result_uncompressed = decoder_uncompressed.decode()
+
+        assert result_uncompressed["Records"] == result_compressed["Records"]
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
